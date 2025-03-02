@@ -2,8 +2,7 @@ import Web3 from "web3";
 import axios from "axios";
 import fs from "fs";
 import { HttpsProxyAgent } from "https-proxy-agent";
-import { config } from "./config.js";
-import { banner } from "./banner.js";
+import { config } from "../kite/config.js";
 import { ethers } from "ethers";
 import chalk from "chalk";
 
@@ -24,32 +23,6 @@ function loadProxies() {
     return proxies;
   } catch (error) {
     console.error("❌ Error reading proxies.txt:", error.message);
-    process.exit(1);
-  }
-}
-
-// 🔥 Load wallets from files
-function loadWallets() {
-  try {
-    const wallets = fs
-      .readFileSync("wallets.txt", "utf8")
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
-    const privKeys = fs
-      .readFileSync("privateKeys.txt", "utf8")
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
-
-    if (wallets.length !== privKeys.length) {
-      console.error("❌ Mismatch between wallets and private keys!");
-      process.exit(1);
-    }
-
-    return wallets.map((wallet, index) => ({ address: wallet, privateKey: privKeys[index] }));
-  } catch (error) {
-    console.error("❌ Error reading wallets.txt or privateKeys.txt:", error.message);
     process.exit(1);
   }
 }

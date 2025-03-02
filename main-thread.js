@@ -11,6 +11,7 @@ import { dirname } from "path"; // Import necessary functions for path manipulat
 import { config } from "./config.js";
 import { questions } from "./questions.js";
 import { baseHeader } from "./core.js";
+import { checkBaseUrl } from "./checkAPI.js";
 const __filename = fileURLToPath(import.meta.url); // Get the current module's filename
 const __dirname = dirname(__filename);
 
@@ -71,26 +72,8 @@ function createAgent(proxy) {
   return protocol.startsWith("socks") ? new SocksProxyAgent(proxyUrl) : new HttpsProxyAgent(proxyUrl);
 }
 
-const AI_ENDPOINTS = {
-  "https://deployment-uu9y1z4z85rapgwkss1muuiz.stag-vxzy.zettablock.com/main": {
-    agent_id: "deployment_UU9y1Z4Z85RAPGwkss1mUUiZ",
-    name: "Kite AI Assistant",
-    questions: questions["Kite AI Assistant"],
-  },
-  "https://deployment-ecz5o55dh0dbqagkut47kzyc.stag-vxzy.zettablock.com/main": {
-    agent_id: "deployment_ECz5O55dH0dBQaGKuT47kzYC",
-    name: "Crypto Price Assistant",
-    questions: questions["Crypto Price Assistant"],
-  },
-  "https://deployment-sofftlsf9z4fya3qchykaanq.stag-vxzy.zettablock.com/main": {
-    agent_id: "deployment_SoFftlsf9z4fyA3QCHYkaANq",
-    name: "Transaction Analyzer",
-    questions: questions["Transaction Analyzer"],
-  },
-};
-
 class WalletStatistics {
-  constructor() {
+  constructor(AI_ENDPOINTS) {
     this.agentInteractions = {};
     for (const endpoint in AI_ENDPOINTS) {
       this.agentInteractions[AI_ENDPOINTS[endpoint].name] = 0;
@@ -104,13 +87,13 @@ class WalletStatistics {
 }
 
 class WalletSession {
-  constructor(walletAddress, sessionId) {
+  constructor(walletAddress, sessionId, AI_ENDPOINTS) {
     this.walletAddress = walletAddress;
     this.sessionId = sessionId;
     this.dailyPoints = 0;
     this.startTime = new Date();
     this.nextResetTime = new Date(this.startTime.getTime() + 24 * 60 * 60 * 1000);
-    this.statistics = new WalletStatistics();
+    this.statistics = new WalletStatistics(AI_ENDPOINTS);
   }
 
   updateStatistics(agentName, success = true) {
@@ -131,8 +114,9 @@ class WalletSession {
 }
 
 class KiteAIAutomation {
-  constructor(walletAddress, proxyList = [], sessionId) {
-    this.session = new WalletSession(walletAddress, sessionId);
+  constructor(walletAddress, proxyList = [], sessionId, AI_ENDPOINTS) {
+    this.AI_ENDPOINTS = AI_ENDPOINTS;
+    this.session = new WalletSession(walletAddress, sessionId, AI_ENDPOINTS);
     this.proxyList = proxyList;
     this.currentProxyIndex = 0;
     this.MAX_DAILY_POINTS = 200;
@@ -178,7 +162,7 @@ class KiteAIAutomation {
       if (waitSeconds > 0) {
         this.logMessage(
           "⏳",
-          `[${this.session}] Maximum daily points (${this.MAX_DAILY_POINTS}) reached | Next reset: ${this.session.nextResetTime.toISOString().replace("T", " ").slice(0, 19)}`,
+          `Maximum daily points (${this.MAX_DAILY_POINTS}) reached | Next reset: ${this.session.nextResetTime.toISOString().replace("T", " ").slice(0, 19)}`,
           "yellow"
         );
         await new Promise((resolve) => setTimeout(resolve, waitSeconds * 1000));
@@ -191,10 +175,9 @@ class KiteAIAutomation {
 
   async getRecentTransactions() {
     this.logMessage("🔍", "Scanning recent transactions...", "white");
-    const url = "https://testnet.kitescan.ai/api/v2/advanced-filters";
+    const url = "https://testnet.kitescan.ai/api/v2/transactions";
     const params = new URLSearchParams({
-      transaction_types: "coin_transfer",
-      age: "5m",
+      filter: "validated",
     });
 
     try {
@@ -299,7 +282,7 @@ class KiteAIAutomation {
     const url = "https://quests-usage-dev.prod.zettablock.com/api/report_usage";
     const data = {
       wallet_address: this.session.walletAddress,
-      agent_id: AI_ENDPOINTS[endpoint].agent_id,
+      agent_id: this.AI_ENDPOINTS[endpoint].agent_id,
       request_text: message,
       response_text: response,
       request_metadata: {},
@@ -347,14 +330,14 @@ class KiteAIAutomation {
         );
 
         const transactions = await this.getRecentTransactions();
-        AI_ENDPOINTS["https://deployment-sofftlsf9z4fya3qchykaanq.stag-vxzy.zettablock.com/main"].questions = transactions.map((tx) => `Analyze this transaction in detail: ${tx}`);
+        this.AI_ENDPOINTS["https://deployment-sofftlsf9z4fya3qchykaanq.stag-vxzy.zettablock.com/main"].questions = transactions.map((tx) => `Analyze this transaction in detail: ${tx}`);
 
-        const endpoints = Object.keys(AI_ENDPOINTS);
+        const endpoints = Object.keys(this.AI_ENDPOINTS);
         const endpoint = endpoints[Math.floor(Math.random() * endpoints.length)];
-        const questions = AI_ENDPOINTS[endpoint].questions;
+        const questions = this.AI_ENDPOINTS[endpoint].questions;
         const question = questions[Math.floor(Math.random() * questions.length)];
 
-        this.logMessage("🤖", `AI System: ${AI_ENDPOINTS[endpoint].name} | Agent ID: ${AI_ENDPOINTS[endpoint].agent_id} | Query: ${question}`, "cyan");
+        this.logMessage("🤖", `AI System: ${this.AI_ENDPOINTS[endpoint].name} | Agent ID: ${this.AI_ENDPOINTS[endpoint].agent_id} | Query: ${question}`, "cyan");
 
         const response = await this.sendAiQuery(endpoint, question);
         let interactionSuccess = false;
@@ -368,7 +351,7 @@ class KiteAIAutomation {
         }
 
         // Update statistics for this interaction
-        this.session.updateStatistics(AI_ENDPOINTS[endpoint].name, interactionSuccess);
+        this.session.updateStatistics(this.AI_ENDPOINTS[endpoint].name, interactionSuccess);
 
         // Display current statistics after each interaction
         this.session.printStatistics();
@@ -392,8 +375,8 @@ class KiteAIAutomation {
 }
 
 async function runWorker(workerData) {
-  const { wallet, accountIndex, proxy, proxyList } = workerData;
-  const to = new KiteAIAutomation(wallet, proxyList, accountIndex + 1);
+  const { wallet, accountIndex, proxy, proxyList, AI_ENDPOINTS } = workerData;
+  const to = new KiteAIAutomation(wallet, proxyList, accountIndex + 1, AI_ENDPOINTS);
   try {
     await to.runAccount();
     parentPort.postMessage({
@@ -424,6 +407,37 @@ async function main() {
     return;
   }
 
+  const { endpoint, message } = await checkBaseUrl();
+  if (!endpoint) return console.log(chalk.red(`Không thể tìm thấy agent Interactions, thử lại sau!`));
+  console.log(chalk.yellow(`${message}`));
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  const AI_ENDPOINTS = endpoint.apis.reduce((acc, item) => {
+    acc[item.api] = {
+      agent_id: item.agent_id,
+      name: item.name,
+      questions: questions[item.name],
+    };
+    return acc;
+  }, {});
+
+  // {
+  //   "https://deployment-uu9y1z4z85rapgwkss1muuiz.stag-vxzy.zettablock.com/main": {
+  //     agent_id: "deployment_UU9y1Z4Z85RAPGwkss1mUUiZ",
+  //     name: "Kite AI Assistant",
+  //     questions: questions["Kite AI Assistant"],
+  //   },
+  //   "https://deployment-ecz5o55dh0dbqagkut47kzyc.stag-vxzy.zettablock.com/main": {
+  //     agent_id: "deployment_ECz5O55dH0dBQaGKuT47kzYC",
+  //     name: "Crypto Price Assistant",
+  //     questions: questions["Crypto Price Assistant"],
+  //   },
+  //   "https://deployment-sofftlsf9z4fya3qchykaanq.stag-vxzy.zettablock.com/main": {
+  //     agent_id: "deployment_SoFftlsf9z4fyA3QCHYkaANq",
+  //     name: "Transaction Analyzer",
+  //     questions: questions["Transaction Analyzer"],
+  //   },
+  // };
+
   console.log("Starting run Program with all Wallets:", wallets.length);
   let maxThreads = config.max_threads;
 
@@ -441,6 +455,7 @@ async function main() {
             accountIndex: currentIndex,
             proxy: proxies[currentIndex % proxies.length],
             proxyList: proxies,
+            AI_ENDPOINTS,
           },
         });
 
